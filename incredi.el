@@ -56,7 +56,7 @@
 (defun incredi-tree (&rest _)
   "Return a tree of visualstrudio directories with .sln files."
   (with-memoization incredi--tree
-    (incredi--get-tree default-directory "\\.sln$")))
+    (incredi--get-tree incredi-dir "\\.sln$")))
 
 
 (defun incredi--parse-sln (file)
@@ -73,8 +73,14 @@
 		 out)))
     out))
 
-(defvar incredi-projects-alist nil
+(defvar incredi--projects-alist nil
   "Alist for projects with directory:hashtable" )
+
+(defun incredi-projects (&rest _)
+  "Return the list of projects in the .sln of default directory"
+  (or (alist-get incredi-dir incredi--projects-alist nil nil #'string-equal)
+      (cdar (push (cons incredi-dir (incredi--parse-sln (incredi--get-sln incredi-dir)))
+		  incredi--projects-alist))))
 
 (defvar-local incredi-last-build-dir nil)
 (defvar-local incredi-last-build-project nil)
@@ -94,14 +100,11 @@
   (declare (interactive-only compile))
   (interactive "P")
   ;; Clean the cached variables
-  (setq incredi-last-build-project nil) ;; clean this one if I will read a new project.
   (let* ((incredi-dir (completing-read "Directory: " #'incredi-tree nil incredi-last-build-dir))
 	 (default-directory incredi-dir) ;; This here not befor not after
-	 (project (completing-read "Project: "
-				   (or (alist-get incredi-dir incredi-projects-alist nil nil #'string-equal)
-				       (cdar (push (cons incredi-dir (incredi--parse-sln (incredi--get-sln incredi-dir)))
-						   incredi-projects-alist)))
-				   nil incredi-last-build-project))
+	 (project (completing-read "Project: " #'incredi-projects nil
+				   (when (string-equal incredi-dir incredi-last-build-dir)
+				     incredi-last-build-project)))
 	 (command (or incredi-last-compile-command
 		      (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
 			      (shell-quote-argument incredi-executable)
