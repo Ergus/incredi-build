@@ -53,11 +53,12 @@
       (setq dir (file-name-directory (directory-file-name path))))
     out))
 
-(defun incredi-tree (&rest _)
+(defun incredi-tree ()
   "Return a tree of visualstrudio directories with .sln files."
   (with-memoization incredi--tree
-    (incredi--get-tree incredi-dir "\\.sln$")))
-
+    ;; use default-directory-here, because we call this function
+    ;; before setting INCREDI-DIR
+    (incredi--get-tree default-directory "\\.sln$")))
 
 (defun incredi--parse-sln (file)
   "Parse the project lines in FILE and return a list of projects."
@@ -84,13 +85,14 @@
 
 (defvar-local incredi-last-build-dir nil)
 (defvar-local incredi-last-build-project nil)
-(defvar-local incredi-last-compile-command nil)
 
 (defvar incredi-dir nil
   "Global value of current build directory.")
 
 (defun incredi--buffer-file-in-project ()
   (and buffer-file-name
+       ;; We use INCREDI-DIR herebecause this evaluated separatelly in
+       ;; every buffer where the defaultdirectory will change.
        (string-prefix-p incredi-dir
 			(expand-file-name buffer-file-name))))
 
@@ -100,23 +102,21 @@
   (declare (interactive-only compile))
   (interactive "P")
   ;; Clean the cached variables
-  (let* ((incredi-dir (completing-read "Directory: " #'incredi-tree nil incredi-last-build-dir))
+  (let* ((incredi-dir (completing-read "Directory: " (incredi-tree) nil incredi-last-build-dir))
 	 (default-directory incredi-dir) ;; This here not befor not after
-	 (project (completing-read "Project: " #'incredi-projects nil
+	 (project (completing-read "Project: " (incredi-projects) nil
 				   (when (string-equal incredi-dir incredi-last-build-dir)
 				     incredi-last-build-project)))
-	 (command (or incredi-last-compile-command
-		      (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
+	 (command (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
 			      (shell-quote-argument incredi-executable)
 			      (incredi--get-sln incredi-dir)
-			      project))))
+			      project)))
 
     (save-some-buffers (not compilation-ask-about-save)
                        #'incredi--buffer-file-in-project)
 
     (setq-local incredi-last-build-dir incredi-dir
-		incredi-last-build-project project
-		incredi-last-compile-command command)
+		incredi-last-build-project project)
 
     (setq-default compilation-directory incredi-dir
 		  compile-command command)
