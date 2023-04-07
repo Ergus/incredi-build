@@ -170,18 +170,17 @@ PINFO is used to get the build information."
      ,(concat
        "^[[:blank:]]*"
        "\\(?:[[:digit:]]+>\\)?"                                ; vc sometimes adds sumber> before line
-       "\\(?1:[^( ]+\\)"                                       ; 1 (file)
+       "\\(?1:\\(?:[[:alpha:]]:\\)?\\(?:.+?(x86)\\)?.+?\\)"     ; 1 (file) ; including C:bla bla(x86) bla
        "\\(?:(\\(?2:[[:digit:]]+\\)?\\(?:[,-]\\(?3:[[:digit:]]+\\)\\)?.*?)\\)?[[:blank:]]*?:" ; 2[[,-]3]
        ".*?\\(?:\\(?4: error \\)\\|\\(?5: warning \\)\\).*?:"  ; 4:warn
        )
      1 2 3 (5)
-     nil        ; Hyperlink
-     '(4 compilation-mode-line-fail)
-     '(5 compilation-mode-line-fail)
-     )
-   )
+     nil
+     (5 compilation-warning-face)
+     (4 compilation-error-face)
+     ))
 
-  (setq compilation-error-regexp-alist '(msbuild cmake cmake-info)))
+   (setq compilation-error-regexp-alist '(msbuild cmake cmake-info)))
 
 
 ;;;###autoload
