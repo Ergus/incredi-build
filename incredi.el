@@ -90,11 +90,17 @@ does not seem available with BuildConsole."
 	  (unless (file-name-absolute-p path)
 	    (setq path (expand-file-name path sln-dir)))
 
-	  (setq plist (plist-put plist :name projname))
-	  (setq plist (plist-put plist :guid guid))
-	  (setq plist (plist-put plist (if (file-name-extension path) :file :dir) path))
-
-	  (puthash projname plist out))))
+	  (cond
+	   ((string-prefix-p sln-dir path)
+	    (setq plist (plist-put plist :name projname))
+	    (setq plist (plist-put plist :guid guid))
+	    (setq plist (plist-put plist (if (file-name-extension path) :file :dir) path))
+	    (puthash projname plist out))
+	   (t
+	    ;; If we are here it means that the path is in another directory
+	    ;; Outside the sln-dir, so, we should not add it to build in this list.
+	    ;; But even if the entry was already added (previous entry), we must remove it.
+	    (remhash projname out))))))
     out))
 
 ;; Info cache
