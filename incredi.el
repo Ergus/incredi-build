@@ -107,9 +107,11 @@ does not seem available with BuildConsole."
 (defvar-local incredi--info nil
   "Variable with all the last build information")
 
-(defun incredi--read-info (mode)
-  "Ask the user for the build information. And return the info list"
-  (let* ((dir (completing-read "Directory: "
+(defun incredi--read-info ()
+  "Ask the user for the build information. And return the info plist"
+  (let* ((mode (completing-read "Build: "
+				'(project-only build rebuild clean) nil t))
+	 (dir (completing-read "Directory: "
 			       (incredi--get-sln-tree default-directory)
 			       nil t
 			       (plist-get incredi--info :dir)))
@@ -119,36 +121,31 @@ does not seem available with BuildConsole."
 				   projects-table nil t
 				   (and (string-equal dir (plist-get incredi--info :dir))
 					(plist-get incredi--info :project))))
-	 (project-entry (gethash project projects-table))
-	 (exe (pcase mode
-		('build (shell-quote-argument incredi-exe))
-		('only (shell-quote-argument incredi-msbuild))
-		(_ (error "Invalid option")))))
-    (list :exe exe
+	 (project-entry (gethash project projects-table)))
+    (list :mode mode
 	  :project project :dir dir :sln file
 	  :file (plist-get project-entry :file))))
 
-
-(defun incredi--build-command (mode pinfo)
+(defun incredi--build-command (pinfo)
   "Should return the build command to use.
 PINFO is used to get the build information."
-  (pcase mode
-    ('build (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
-		    (plist-get pinfo :exe)
-		    (plist-get pinfo :sln)
-		    (plist-get pinfo :project)))
-    ('only (format "%s /p:BuildProjectReferences=false %s"
-		   (plist-get pinfo :exe)
-		   (plist-get pinfo :file)))
+  (pcase (plist-get pinfo :mode)
+    ("build" (format "%s %s /%s /prj=%s /cfg=\"Debug|Win32\""
+		     (shell-quote-argument incredi-exe)
+		     (plist-get pinfo :sln)
+		     (plist-get pinfo :mode)
+		     (plist-get pinfo :project)))
+    ("project-only" (format "%s /p:BuildProjectReferences=false %s"
+			    (shell-quote-argument incredi-msbuild)
+			    (plist-get pinfo :file)))
     (_ (error "Error composing build command"))))
 
-(defun incredi--build-internal (mode)
+(defun incredi--build-internal (pinfo)
   "Run `compile' in the project root."
   ;; Clean the cached variables
-  (let* ((pinfo (incredi--read-info mode))          ;; Ask user about build details
-	 (default-directory (plist-get pinfo :dir)) ;; Set this here not after
+  (let* ((default-directory (plist-get pinfo :dir)) ;; Set this here not after
 	 (command (read-shell-command "Command: "   ;; Ask to confirm the final command
-				      (incredi--build-command mode pinfo)
+				      (incredi--build-command pinfo)
 				      'incredi--history)))
 
     ;; Save files in a subdirectory of current directory.
@@ -194,13 +191,7 @@ PINFO is used to get the build information."
 (defun incredi-build ()
   "Run `build project' in the project root."
   (interactive)
-  (incredi--build-internal 'build))
-
-;;;###autoload
-(defun incredi-only ()
-  "Run `build project only' for a vsproject."
-  (interactive)
-  (incredi--build-internal 'only))
+  (incredi--build-internal (incredi--read-info)))
 
 ;; Add a hook to set a filter to set the incredi-id if the output has a Build ID
 (defun incredi--compilation-filter-hook ()
