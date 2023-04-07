@@ -35,12 +35,12 @@
   :group 'processes)
 
 (defcustom incredi-exe (let ((exe (executable-find "BuildConsole")))
-				(when exe (file-name-nondirectory exe)))
+			 (when exe (file-name-nondirectory exe)))
   "Incredibuild executable."
   :local t)
 
 (defcustom incredi-msbuild (let ((exe (executable-find "MSBuild")))
-				(when exe (file-name-nondirectory exe)))
+			     (when exe (file-name-nondirectory exe)))
   "MSBuild executable. We need to use it because build project only
 does not seem available with BuildConsole."
   :local t)
@@ -185,12 +185,10 @@ PINFO is used to get the build information."
      1 2 3 (5)
      nil
      (5 compilation-warning-face)
-     (4 compilation-error-face)
-     ))
+     (4 compilation-error-face)))
 
-   (setq compilation-error-regexp-alist '(msbuild cmake cmake-info))
-   (add-to-list 'compilation-filter-hook #'incredi--compilation-filter-hook)
-   )
+  (setq compilation-error-regexp-alist '(msbuild cmake cmake-info))
+  (add-to-list 'compilation-filter-hook #'incredi--compilation-filter-hook))
 
 ;;;###autoload
 (defun incredi-build ()
