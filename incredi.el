@@ -110,10 +110,13 @@ does not seem available with BuildConsole."
 (defvar-local incredi--info nil
   "Variable with all the last build information")
 
+(defconst incredi--commands '("build" "rebuild" "clean")
+  "List of commands to build with incredibuild BuildConsole")
+
 (defun incredi--read-info ()
   "Ask the user for the build information. And return the info plist"
   (let* ((mode (completing-read "Build: "
-				'(project-only build rebuild clean) nil t))
+				(append '("project-only") incredi--commands) nil t))
 	 (dir (completing-read "Directory: "
 			       (incredi--get-sln-tree default-directory)
 			       nil t
@@ -136,11 +139,13 @@ does not seem available with BuildConsole."
   "Should return the build command to use.
 PINFO is used to get the build information."
   (pcase (plist-get pinfo :mode)
-    ("build" (format "%s %s /%s /prj=%s /cfg=\"Debug|Win32\""
-		     (shell-quote-argument incredi-exe)
-		     (plist-get pinfo :sln)
-		     (plist-get pinfo :mode)
-		     (plist-get pinfo :project)))
+    ((pred (lambda (n)
+	     (member n incredi--commands)))
+     (format "%s %s /%s /prj=%s /cfg=\"Debug|Win32\""
+	     (shell-quote-argument incredi-exe)
+	     (plist-get pinfo :sln)
+	     (plist-get pinfo :mode)
+	     (plist-get pinfo :project)))
     ("project-only" (format "%s /p:BuildProjectReferences=false %s"
 			    (shell-quote-argument incredi-msbuild)
 			    (plist-get pinfo :file)))
