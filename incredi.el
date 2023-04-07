@@ -27,6 +27,8 @@
 
 ;;; Code:
 
+(require 'cl-lib)
+
 (defgroup incredi nil
   "Incredibuild integration group."
   :group 'tools
@@ -180,8 +182,9 @@ PINFO is used to get the build information."
      (4 compilation-error-face)
      ))
 
-   (setq compilation-error-regexp-alist '(msbuild cmake cmake-info)))
-
+   (setq compilation-error-regexp-alist '(msbuild cmake cmake-info))
+   (add-to-list 'compilation-filter-hook #'incredi--compilation-filter-hook)
+   )
 
 ;;;###autoload
 (defun incredi-build ()
@@ -195,7 +198,31 @@ PINFO is used to get the build information."
   (interactive)
   (incredi--build-internal 'only))
 
+;; Add a hook to set a filter to set the incredi-id if the output has a Build ID
+(defun incredi--compilation-filter-hook ()
+  "Hook to check the incredibuild id."
+  (save-excursion
+    (when (re-search-backward "Build ID: \\(?1:{.*?}\\)"
+			      compilation-filter-start
+			      t)
+      (process-put (get-buffer-process (current-buffer))
+		   :incredi-id (match-string-no-properties 1))
+      (message "Setting incredi-id: %s" (match-string-no-properties 1)))))
 
-
+(defun incredi-kill ()
+  "Kill the process made by the incredi-build commands.
+If the process is a BuildConsole do a `BuildConsole /Stop[=id]' if possible."
+  (interactive)
+  (if-let* ((buffer (compilation-find-buffer))
+	    (process (get-buffer-process buffer))
+	    (exe (shell-quote-argument incredi-exe)))
+      (if (cl-member exe (process-command process) :test #'string-match-p)
+	  (let* ((id (process-get process :incredi-id))
+		 (command (concat exe " /Stop" (if id (concat "=" id) "All")))
+		 (status (process-file-shell-command command)))
+	    (message "Kill command: '%s' returned %s" command status))
+	;; If the process has no :incredi-id, then kill it normally
+	(interrupt-process process))
+    (error "No compilation process running")))
 
 (provide 'incredi)
