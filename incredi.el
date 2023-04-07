@@ -162,6 +162,28 @@ PINFO is used to get the build information."
     ;; Finally start the build
     (compilation-start command)))
 
+;; Add compilation regex to match visual studio error format.
+(with-eval-after-load 'compile
+  (add-to-list
+   'compilation-error-regexp-alist-alist
+   `(msbuild
+     ,(concat
+       "^[[:blank:]]*"
+       "\\(?:[[:digit:]]+>\\)?"                                ; vc sometimes adds sumber> before line
+       "\\(?1:[^( ]+\\)"                                       ; 1 (file)
+       "\\(?:(\\(?2:[[:digit:]]+\\)?\\(?:[,-]\\(?3:[[:digit:]]+\\)\\)?.*?)\\)?[[:blank:]]*?:" ; 2[[,-]3]
+       ".*?\\(?:\\(?4: error \\)\\|\\(?5: warning \\)\\).*?:"  ; 4:warn
+       )
+     1 2 3 (5)
+     nil        ; Hyperlink
+     '(4 compilation-mode-line-fail)
+     '(5 compilation-mode-line-fail)
+     )
+   )
+
+  (setq compilation-error-regexp-alist '(msbuild cmake cmake-info)))
+
+
 ;;;###autoload
 (defun incredi-build ()
   "Run `build project' in the project root."
