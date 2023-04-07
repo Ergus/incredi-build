@@ -34,12 +34,13 @@
 
 (defcustom incredi-exe (let ((exe (executable-find "BuildConsole")))
 				(when exe (file-name-nondirectory exe)))
-  "Incredibuild executable"
+  "Incredibuild executable."
   :local t)
 
 (defcustom incredi-msbuild (let ((exe (executable-find "MSBuild")))
 				(when exe (file-name-nondirectory exe)))
-  "MSBuild executable"
+  "MSBuild executable. We need to use it because build project only
+does not seem available with BuildConsole."
   :local t)
 
 (defconst incredi-regex "^Project(\"{\\([A-Z0-9\-]+\\)}\") = \"\\([^\"]+\\)\", \"\\([^\"]+\\)\", \"{\\([A-Z0-9\-]+\\)}\"$"
@@ -124,7 +125,7 @@
   "Should return the build command to use.
 PINFO is used to get the build information."
   (pcase mode
-    ('build (format "%s %s /build /p:BuildProjectReferences=false /prj=%s /cfg=\"Debug|Win32\""
+    ('build (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
 		    (plist-get pinfo :exe)
 		    (plist-get pinfo :sln)
 		    (plist-get pinfo :project)))
@@ -136,36 +137,40 @@ PINFO is used to get the build information."
 (defun incredi--build-internal (mode)
   "Run `compile' in the project root."
   ;; Clean the cached variables
-  (let* ((pinfo (incredi--read-info mode))
-	 (default-directory (plist-get pinfo :dir))
-	 (command (read-shell-command "Command: "
+  (let* ((pinfo (incredi--read-info mode))          ;; Ask user about build details
+	 (default-directory (plist-get pinfo :dir)) ;; Set this here not after
+	 (command (read-shell-command "Command: "   ;; Ask to confirm the final command
 				      (incredi--build-command mode pinfo)
 				      'incredi--history)))
 
-    (add-to-history 'incredi--history command)
-
+    ;; Save files in a subdirectory of current directory.
     (save-some-buffers (not compilation-ask-about-save)
                        (lambda ()
 			 (and buffer-file-name
-			      (string-prefix-p (plist-get pinfo :dir)
+			      (string-prefix-p (plist-get pinfo :dir) ;; Don't use default-directory here
 					       (expand-file-name buffer-file-name)))))
 
-    (setq-local incredi--info pinfo)  ;; This before save-some-buffers
+    (add-to-history 'incredi--history command) ;; Once confirmed, set the command in the history
 
+    ;; Cache to remember next time.
+    (setq-local incredi--info pinfo)
+
+    ;; Save values for "recompile".
     (unless (equal compile-command command)
       (setq compile-command command))
     (setq-default compilation-directory default-directory)
+    ;; Finally start the build
     (compilation-start command)))
 
 ;;;###autoload
 (defun incredi-build ()
-  "Run `compile' in the project root."
+  "Run `build project' in the project root."
   (interactive)
   (incredi--build-internal 'build))
 
 ;;;###autoload
 (defun incredi-only ()
-  "Run `compile' in the project root."
+  "Run `build project only' for a vsproject."
   (interactive)
   (incredi--build-internal 'only))
 
