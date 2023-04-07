@@ -32,14 +32,14 @@
   :group 'tools
   :group 'processes)
 
-(defcustom incredi-incredibuild (let ((exe (executable-find "BuildConsole")))
+(defcustom incredi-exe (let ((exe (executable-find "BuildConsole")))
 				(when exe (file-name-nondirectory exe)))
   "Incredibuild executable"
   :local t)
 
 (defcustom incredi-msbuild (let ((exe (executable-find "MSBuild")))
-			     (when exe (file-name-nondirectory exe)))
-  "Incredibuild executable"
+				(when exe (file-name-nondirectory exe)))
+  "MSBuild executable"
   :local t)
 
 (defconst incredi-regex "^Project(\"{\\([A-Z0-9\-]+\\)}\") = \"\\([^\"]+\\)\", \"\\([^\"]+\\)\", \"{\\([A-Z0-9\-]+\\)}\"$"
@@ -50,9 +50,9 @@
 
 (defun incredi--get-sln (dir)
   "Return the .sln file in DIR if it exists or nil otherwise."
-  (car (directory-files dir t "\\.sln$" t 1)))
+  (car (directory-files dir nil "\\.sln$" t 1)))
 
-(defun incredi--get-tree (dir regex)
+(defun incredi--get-tree (dir)
   "Get a list of DIR's dominant directories containing a file with name matching REGEX."
   (let (out)
     (while-let ((path (and dir
@@ -66,13 +66,16 @@
   (with-memoization incredi--sln-tree
     ;; use default-directory-here, because we call this function
     ;; before setting INCREDI-DIR
-    (incredi--get-tree dir "\\.sln$")))
+    (incredi--get-tree dir)))
 
 (defun incredi--parse-sln (file)
   "Parse the project lines in FILE and return a list of projects."
+  (unless (file-name-absolute-p file)
+    (error "incredi--parse-sln needs to receive an absolute path"))
   (when-let* ((stringp file)
 	      (file-readable-p file)
-	      (out (make-hash-table)))
+	      (sln-dir (file-name-directory file))
+	      (out (make-hash-table :test #'equal)))
     (with-temp-buffer
       (insert-file-contents file)
       (while (re-search-forward incredi-regex nil t)
@@ -81,23 +84,15 @@
 	       (guid (match-string-no-properties 4))
 	       (plist (gethash projname out)))
 
-	  (if (file-name-extension path)
-	      (plist-put plist :file path)
-	    (plist-put plist :dir path))
+	  (unless (file-name-absolute-p path)
+	    (setq path (expand-file-name path sln-dir)))
+
+	  (setq plist (plist-put plist :name projname))
+	  (setq plist (plist-put plist :guid guid))
+	  (setq plist (plist-put plist (if (file-name-extension path) :file :dir) path))
 
 	  (puthash projname plist out))))
     out))
-
-;; Project alist and cache
-(defvar incredi--projects-alist nil
-  "Alist for projects with directory:hashtable" )
-
-(defun incredi--sln-projects (file)
-  "Return the list of projects in the .sln of dir"
-  (let ((dir (file-name-directory file)))
-    (or (alist-get dir incredi--projects-alist nil nil #'string-equal)
-	(cdar (push (cons dir (incredi--parse-sln file))
-		    incredi--projects-alist)))))
 
 ;; Info cache
 (defvar-local incredi--info nil
@@ -110,28 +105,32 @@
 			       nil t
 			       (plist-get incredi--info :dir)))
 	 (file (incredi--get-sln dir))
+	 (projects-table (incredi--parse-sln (expand-file-name file dir)))
 	 (project (completing-read "Project: "
-				   (incredi--sln-projects file)
-				   nil t
+				   projects-table nil t
 				   (and (string-equal dir (plist-get incredi--info :dir))
 					(plist-get incredi--info :project))))
-	 (exe (shell-quote-argument
-		   (pcase mode
-		     ('build incredi-incredibuild)
-		     ('only incredi-msbuild)
-		     (_ (error "Mode '%s not known" mode))))))
-
-    (list :dir dir :project project :exe exe :sln file)))
+	 (project-entry (gethash project projects-table))
+	 (exe (pcase mode
+		('build (shell-quote-argument incredi-exe))
+		('only (shell-quote-argument incredi-msbuild))
+		(_ (error "Invalid option")))))
+    (list :exe exe
+	  :project project :dir dir :sln file
+	  :file (plist-get project-entry :file))))
 
 
 (defun incredi--build-command (mode pinfo)
   "Should return the build command to use.
 PINFO is used to get the build information."
   (pcase mode
-    ('build (format "%s %s /build /prj=%s /cfg=\"Debug|Win32\""
+    ('build (format "%s %s /build /p:BuildProjectReferences=false /prj=%s /cfg=\"Debug|Win32\""
 		    (plist-get pinfo :exe)
 		    (plist-get pinfo :sln)
 		    (plist-get pinfo :project)))
+    ('only (format "%s /p:BuildProjectReferences=false %s"
+		   (plist-get pinfo :exe)
+		   (plist-get pinfo :file)))
     (_ (error "Error composing build command"))))
 
 (defun incredi--build-internal (mode)
@@ -163,5 +162,14 @@ PINFO is used to get the build information."
   "Run `compile' in the project root."
   (interactive)
   (incredi--build-internal 'build))
+
+;;;###autoload
+(defun incredi-only ()
+  "Run `compile' in the project root."
+  (interactive)
+  (incredi--build-internal 'only))
+
+
+
 
 (provide 'incredi)
