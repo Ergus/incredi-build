@@ -45,7 +45,10 @@
 does not seem available with BuildConsole."
   :local t)
 
-(defconst incredi-regex "^Project(\"{\\([A-Z0-9\-]+\\)}\") = \"\\([^\"]+\\)\", \"\\([^\"]+\\)\", \"{\\([A-Z0-9\-]+\\)}\"$"
+(defconst incredi-regex (concat "^Project(\"{\\([A-Z0-9\-]+\\)}\")"  ;; Project type
+				" = \"\\([^\"]+\\)\","               ;; Name
+				" \"\\([^\"]+\\)\","                 ;; Path/ File
+				" \"{\\([A-Z0-9\-]+\\)}\"$")         ;; GUID
   "Regular expression to search.")
 
 (defvar-local incredi--sln-tree nil "Remember the vs incredibuild tree.")
@@ -116,9 +119,12 @@ does not seem available with BuildConsole."
 			       nil t
 			       (plist-get incredi--info :dir)))
 	 (file (incredi--get-sln dir))
-	 (projects-table (incredi--parse-sln (expand-file-name file dir)))
+	 (projects-table (incredi--parse-sln (expand-file-name file dir))) ;; Hash table
 	 (project (completing-read "Project: "
-				   projects-table nil t
+				   projects-table
+				   (lambda (key value)
+				     (plist-get value :file))
+				   t
 				   (and (string-equal dir (plist-get incredi--info :dir))
 					(plist-get incredi--info :project))))
 	 (project-entry (gethash project projects-table)))
