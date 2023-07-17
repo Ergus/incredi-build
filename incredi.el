@@ -45,11 +45,17 @@
 does not seem available with BuildConsole."
   :local t)
 
-(defconst incredi-regex (concat "^Project(\"{\\([A-Z0-9\-]+\\)}\")"  ;; Project type
+(defconst incredi-project-regex (concat "^Project(\"{\\([A-Z0-9\-]+\\)}\")"  ;; Project type
 				" = \"\\([^\"]+\\)\","               ;; Name
 				" \"\\([^\"]+\\)\","                 ;; Path/ File
 				" \"{\\([A-Z0-9\-]+\\)}\"$")         ;; GUID
-  "Regular expression to search.")
+  "Regular expression to search projects.")
+
+(defconst incredi-config-regex (concat "^[[:blank:]]+"                         ;; some spaces before
+				       "{\\([0-9,A-Z,-]+\\)}"                  ;; guid
+				       "\\\.\\(?:[A-Z,a-z,0-9,\.|]+\\) = "
+				       "\\(\\(?:Release\\|Debug\\|MinSizeRel\\|RelWithDebInfo\\)|\\(?:win32\\|x64\\)\\)$")
+  "Regular expression to search guid build info.")
 
 (defvar-local incredi--sln-tree nil "Remember the vs incredibuild tree.")
 (defvar incredi--history nil "History of incredibuild commands.")
@@ -60,7 +66,11 @@ does not seem available with BuildConsole."
 
 (defun incredi--get-tree (dir)
   "Get a list of DIR's dominant directories containing a file with name matching REGEX."
-  (let (out)
+  (let* ((root-dir (locate-dominating-file dir "build"))
+	 (dir (file-name-concat
+	       (file-name-concat root-dir "build")
+	       (file-relative-name (locate-dominating-file dir "CMakeLists.txt") root-dir)))
+	 (out))
     (while-let ((path (and dir
 			   (locate-dominating-file dir #'incredi--get-sln))))
       (push path out)
@@ -81,10 +91,12 @@ does not seem available with BuildConsole."
   (when-let* ((stringp file)
 	      (file-readable-p file)
 	      (sln-dir (file-name-directory file))
-	      (out (make-hash-table :test #'equal)))
+	      (out (make-hash-table :test #'equal))
+	      (tmp (make-hash-table :test #'equal)))
     (with-temp-buffer
       (insert-file-contents file)
-      (while (re-search-forward incredi-regex nil t)
+      ;; Now iterate over the file
+      (while (re-search-forward incredi-project-regex nil t)
 	(let* ((projname (match-string-no-properties 2))
 	       (path (match-string-no-properties 3))
 	       (guid (match-string-no-properties 4))
@@ -98,13 +110,29 @@ does not seem available with BuildConsole."
 	    (setq plist (plist-put plist :name projname))
 	    (setq plist (plist-put plist :guid guid))
 	    (setq plist (plist-put plist (if (file-name-extension path) :file :dir) path))
-	    (puthash projname plist out))
+	    (setq plist (plist-put plist :configs '()))
+	    (puthash projname plist out)
+	    (puthash guid projname tmp))
 	   (t
 	    ;; If we are here it means that the path is in another directory
 	    ;; Outside the sln-dir, so, we should not add it to build in this list.
 	    ;; But even if the entry was already added (previous entry), we must remove it.
-	    (remhash projname out))))))
-    out))
+	    (remhash projname out)))))
+      ;; Ok, now move again to the bginning to search the Global tag
+      (goto-char (point-min))
+      (re-search-forward "^Global$" nil t)  ;; got to the "Global" Tag
+      (let ((global-end (save-excursion     ;; Find the global tag end to limit search
+			  (re-search-forward "^EndGlobal$" nil t))))
+	(while (re-search-forward incredi-config-regex global-end t)
+	  (when-let ((projname (gethash (match-string-no-properties 1) tmp)))
+	    (let* ((plist (gethash projname out))
+		  (pconfig (plist-get plist :configs)))
+
+	      (add-to-list 'pconfig (match-string-no-properties 2))
+
+	      (setf (gethash projname out)
+		    (plist-put plist :configs pconfig)))))))
+      out))
 
 ;; Info cache
 (defvar-local incredi--info nil
@@ -133,7 +161,8 @@ does not seem available with BuildConsole."
 	 (project-entry (gethash project projects-table)))
     (list :mode mode
 	  :project project :dir dir :sln file
-	  :file (plist-get project-entry :file))))
+	  :file (plist-get project-entry :file)
+	  :configs (plist-get project-entry :configs))))
 
 (defun incredi--build-command (pinfo)
   "Should return the build command to use.
@@ -141,11 +170,14 @@ PINFO is used to get the build information."
   (pcase (plist-get pinfo :mode)
     ((pred (lambda (n)
 	     (member n incredi--commands)))
-     (format "%s %s /%s /prj=%s /cfg=\"Debug|Win32\""
+     (format "%s %s /%s /prj=%s /cfg=\"%s\""
 	     (shell-quote-argument incredi-exe)
 	     (plist-get pinfo :sln)
 	     (plist-get pinfo :mode)
-	     (plist-get pinfo :project)))
+	     (plist-get pinfo :project)
+	     (completing-read "Config: "
+			      (plist-get pinfo :configs)
+			      nil t)))
     ("project-only" (format "%s /p:BuildProjectReferences=false %s"
 			    (shell-quote-argument incredi-msbuild)
 			    (plist-get pinfo :file)))
