@@ -158,11 +158,14 @@ does not seem available with BuildConsole."
 				   t
 				   (and (string-equal dir (plist-get incredi--info :dir))
 					(plist-get incredi--info :project))))
-	 (project-entry (gethash project projects-table)))
+	 (project-entry (gethash project projects-table))
+	 (project-config (completing-read "Config: "
+					  (plist-get project-entry :configs)
+					  nil t)))
     (list :mode mode
 	  :project project :dir dir :sln file
 	  :file (plist-get project-entry :file)
-	  :configs (plist-get project-entry :configs))))
+	  :configs project-config)))
 
 (defun incredi--build-command (pinfo)
   "Should return the build command to use.
@@ -175,12 +178,13 @@ PINFO is used to get the build information."
 	     (plist-get pinfo :sln)
 	     (plist-get pinfo :mode)
 	     (plist-get pinfo :project)
-	     (completing-read "Config: "
-			      (plist-get pinfo :configs)
-			      nil t)))
-    ("project-only" (format "%s /p:BuildProjectReferences=false %s"
-			    (shell-quote-argument incredi-msbuild)
-			    (plist-get pinfo :file)))
+	     (plist-get pinfo :configs)))
+    ("project-only"
+     (format "%s /p:BuildProjectReferences=false /p:Configuration=%s /p:Platform=%s %s"
+	     (shell-quote-argument incredi-msbuild)
+	     (nth 0 (string-split (plist-get pinfo :configs) "|"))
+	     (nth 1 (string-split (plist-get pinfo :configs) "|"))
+	     (plist-get pinfo :file)))
     (_ (error "Error composing build command"))))
 
 (defun incredi--build-internal (pinfo)
