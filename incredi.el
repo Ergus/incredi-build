@@ -45,17 +45,20 @@
 does not seem available with BuildConsole."
   :local t)
 
+(defcustom incredi-parallel t
+  "Attempt to use incredibuild by default. Otherwise it will use msbuild")
+
 (defconst incredi-project-regex (concat "^Project(\"{\\([A-Z0-9\-]+\\)}\")"  ;; Project type
-				" = \"\\([^\"]+\\)\","               ;; Name
-				" \"\\([^\"]+\\)\","                 ;; Path/ File
-				" \"{\\([A-Z0-9\-]+\\)}\"$")         ;; GUID
+					" = \"\\([^\"]+\\)\","               ;; Name
+					" \"\\([^\"]+\\)\","                 ;; Path/ File
+					" \"{\\([A-Z0-9\-]+\\)}\"$")         ;; GUID
   "Regular expression to search projects.")
 
 (defconst incredi-config-regex (concat "^[[:blank:]]+"                         ;; some spaces before
 				       "{\\([0-9,A-Z,-]+\\)}"                  ;; guid
 				       "\\\.\\(?:[A-Z,a-z,0-9,\.|]+\\) = "
 				       "\\(\\(?:Release\\|Debug\\|MinSizeRel\\|RelWithDebInfo\\)|\\(?:win32\\|x64\\)\\)$")
-  "Regular expression to search guid build info.")
+  "Regular expression to search config build info.")
 
 (defvar-local incredi--sln-tree nil "Remember the vs incredibuild tree.")
 (defvar incredi--history nil "History of incredibuild commands.")
@@ -110,7 +113,7 @@ does not seem available with BuildConsole."
 	    (setq plist (plist-put plist :name projname))
 	    (setq plist (plist-put plist :guid guid))
 	    (setq plist (plist-put plist (if (file-name-extension path) :file :dir) path))
-	    (setq plist (plist-put plist :configs '()))
+	    (setq plist (plist-put plist :configarch '()))
 	    (puthash projname plist out)
 	    (puthash guid projname tmp))
 	   (t
@@ -126,66 +129,89 @@ does not seem available with BuildConsole."
 	(while (re-search-forward incredi-config-regex global-end t)
 	  (when-let ((projname (gethash (match-string-no-properties 1) tmp)))
 	    (let* ((plist (gethash projname out))
-		  (pconfig (plist-get plist :configs)))
+		  (pconfig (plist-get plist :configarch)))
 
 	      (add-to-list 'pconfig (match-string-no-properties 2))
 
 	      (setf (gethash projname out)
-		    (plist-put plist :configs pconfig)))))))
+		    (plist-put plist :configarch pconfig)))))))
       out))
 
 ;; Info cache
 (defvar-local incredi--info nil
   "Variable with all the last build information")
 
-(defconst incredi--commands '("build" "rebuild" "clean")
+(defsubst incredi-concat-arch (plist--info)
+  "Concat a formated arch and build mode from plist"
+  (and plist--info
+       (concat (plist-get plist--info :config)
+	       "|"
+	       (plist-get plist--info :arch))))
+
+(defconst incredi--commands '("build" "rebuild" "clean" "project-only")
   "List of commands to build with incredibuild BuildConsole")
 
-(defun incredi--read-info ()
-  "Ask the user for the build information. And return the info plist"
-  (let* ((mode (completing-read "Build: "
-				(append '("project-only") incredi--commands) nil t))
-	 (dir (completing-read "Directory: "
-			       (incredi--get-sln-tree default-directory)
-			       nil t
-			       (plist-get incredi--info :dir)))
-	 (file (incredi--get-sln dir))
-	 (projects-table (incredi--parse-sln (expand-file-name file dir))) ;; Hash table
-	 (project (completing-read "Project: "
-				   projects-table
-				   (lambda (key value)
-				     (plist-get value :file))
-				   t
-				   (and (string-equal dir (plist-get incredi--info :dir))
-					(plist-get incredi--info :project))))
+(defun incredi--read-info (&optional mode topdir project config)
+  "Ask the user for the build information unless the arguments MODE
+TOPDIR PROJECT CONFIG are proided and correct. Returns the info
+plist that will be passed to INCREDI--BUILD-INTERNAL and stored
+in incredi--info."
+  (let* ((mode (or (car (member mode incredi--commands))
+		   (completing-read "Build: " incredi--commands nil t)))
+	 (sln-tree (incredi--get-sln-tree default-directory))
+	 (dir (if topdir
+		  (car sln-tree)
+		(completing-read "Directory: " sln-tree nil t
+				 (or (plist-get incredi--info :dir)
+				     (car sln-tree)))))              ;; sln-tree may have in car the to path
+	 (sln (incredi--get-sln dir))
+	 (projects-table (incredi--parse-sln (expand-file-name sln dir))) ;; Hash table
+	 (project (if (and project (gethash project projects-table))  ;; project is non-nil and has an entry in hash table
+		      project
+		    (completing-read "Project: "
+				     projects-table
+				     (lambda (key value)
+				       (plist-get value :file))
+				     t
+				     (and (string-equal dir (plist-get incredi--info :dir))
+					  (plist-get incredi--info :project)))))
 	 (project-entry (gethash project projects-table))
-	 (project-config (completing-read "Config: "
-					  (plist-get project-entry :configs)
-					  nil t)))
-    (list :mode mode
-	  :project project :dir dir :sln file
-	  :file (plist-get project-entry :file)
-	  :configs project-config)))
+	 (project-config (or (car (member config (plist-get project-entry :configarch)))
+			     (completing-read "Config: "
+					      (plist-get project-entry :configarch)
+					      nil t
+					      (incredi-concat-arch incredi--info)))))
+    ;; Now build the list
+    (list :mode mode                               ;; build rebuild clean
+	  :project project                         ;; Project name "Projections", "INSTALL"
+	  :dir dir                                 ;; sln's directory
+	  :sln sln                                 ;; sln file
+	  :file (plist-get project-entry :file)    ;; vcxproj
+	  :config (nth 0 (string-split project-config "|")) ;; Debug Release
+	  :arch (nth 1 (string-split project-config "|"))))) ;; x64 or x86
 
 (defun incredi--build-command (pinfo)
   "Should return the build command to use.
 PINFO is used to get the build information."
-  (pcase (plist-get pinfo :mode)
-    ((pred (lambda (n)
-	     (member n incredi--commands)))
-     (format "%s %s /%s /prj=%s /cfg=\"%s\""
-	     (shell-quote-argument incredi-exe)
-	     (plist-get pinfo :sln)
-	     (plist-get pinfo :mode)
-	     (plist-get pinfo :project)
-	     (plist-get pinfo :configs)))
-    ("project-only"
-     (format "%s /p:BuildProjectReferences=false /p:Configuration=%s /p:Platform=%s %s"
-	     (shell-quote-argument incredi-msbuild)
-	     (nth 0 (string-split (plist-get pinfo :configs) "|"))
-	     (nth 1 (string-split (plist-get pinfo :configs) "|"))
-	     (plist-get pinfo :file)))
-    (_ (error "Error composing build command"))))
+  (if (and incredi-exe       ;; there is an incredibuild executable
+	   incredi-parallel  ;; The parallel build is enabled
+	   (not (string-equal (plist-get pinfo :mode) "project-only")))
+      (format "%s %s /%s /prj=%s /cfg=\"%s|%s\""
+	      (shell-quote-argument incredi-exe)
+	      (plist-get pinfo :sln)
+	      (plist-get pinfo :mode)
+	      (plist-get pinfo :project)
+	      (plist-get pinfo :config)
+	      (plist-get pinfo :arch))
+    (format "%s %s %s /p:Configuration=%s /p:Platform=%s"
+	    (shell-quote-argument incredi-msbuild)
+	    (plist-get pinfo :file)
+	    (pcase (plist-get pinfo :mode)
+	      ((or "build" "clean" ) (concat "/t:" (plist-get pinfo :mode)))
+	      ("rebuild" "/t:clean|build")
+	      ("project-only" "/p:BuildProjectReferences=false"))
+	    (plist-get pinfo :config)
+	    (plist-get pinfo :arch))))
 
 (defun incredi--build-internal (pinfo)
   "Run `compile' in the project root."
@@ -221,8 +247,8 @@ PINFO is used to get the build information."
    `(msbuild
      ,(concat
        "^[[:blank:]]*"
-       "\\(?:[[:digit:]]+>\\)?"                                ; vc sometimes adds sumber> before line
-       "\\(?1:\\(?:[[:alpha:]]:\\)?\\(?:.+?(x86)\\)?.+?\\)"     ; 1 (file) ; including C:bla bla(x86) bla
+       "\\(?:[[:digit:]]+>[[:blank:]]*\\)?"                                ; vc sometimes adds sumber> before line
+       "\\(?1:\\(?:[[:upper:]]:\\)?\\(?:.+?(x86)\\)?.+?\\)"     ; 1 (file) ; including C:bla bla(x86) bla
        "\\(?:(\\(?2:[[:digit:]]+\\)?\\(?:[,-]\\(?3:[[:digit:]]+\\)\\)?.*?)\\)?[[:blank:]]*?:" ; 2[[,-]3]
        ".*?\\(?:\\(?4: error \\)\\|\\(?5: warning \\)\\).*?:"  ; 4:warn
        )
@@ -234,12 +260,6 @@ PINFO is used to get the build information."
   (setq compilation-error-regexp-alist '(msbuild cmake cmake-info))
   (add-to-list 'compilation-filter-hook #'incredi--compilation-filter-hook))
 
-;;;###autoload
-(defun incredi-build ()
-  "Run `build project' in the project root."
-  (interactive)
-  (incredi--build-internal (incredi--read-info)))
-
 ;; Add a hook to set a filter to set the incredi-id if the output has a Build ID
 (defun incredi--compilation-filter-hook ()
   "Hook to check the incredibuild id."
@@ -250,6 +270,35 @@ PINFO is used to get the build information."
       (process-put (get-buffer-process (current-buffer))
 		   :incredi-id (match-string-no-properties 1))
       (message "Setting incredi-id: %s" (match-string-no-properties 1)))))
+
+;; Interactive commands
+
+;;;###autoload
+(defun incredi-build ()
+  "Run `build project' in the project root."
+  (interactive)
+  (incredi--build-internal (incredi--read-info)))
+
+;;;###autoload
+(defun incredi-all ()
+  "Run `build all' in the project top directory."
+  (interactive)
+  (incredi--build-internal
+   (incredi--read-info "build" t "ALL_BUILD" (unless current-prefix-arg
+					       (incredi-concat-arch incredi--info)))))
+
+;;;###autoload
+(defun incredi-install ()
+  "Run `build install' in the project top directory."
+  (interactive)
+  (incredi--build-internal
+   (incredi--read-info "project-only" t "INSTALL" (unless current-prefix-arg
+						    (incredi-concat-arch incredi--info)))))
+
+(defun incredi-rebuild ()
+  "Run `build project' reusing the last build information."
+  (interactive)
+  (incredi--build-internal incredi--info))
 
 (defun incredi-kill ()
   "Kill the process made by the incredi-build commands.
