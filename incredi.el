@@ -3,9 +3,9 @@
 ;; Copyright (C) 2022  Free Software Foundation, Inc.
 
 ;; Author: Jimmy Aguilar Mena
-;; URL: https://github.com/Ergus/gtags-mode
+;; URL: https://github.com/Ergus/incredi-build
 ;; Keywords: incredibuild compile
-;; Version: 1.0
+;; Version: 2.0
 ;; Package-Requires: ((emacs "28"))
 
 ;; This program is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 
 ;;; Commentary:
 
-;; Simple integration to compile visual-studio projects with emacs
+;; Simple integration to compile visual-studio projects with emacs+incredibuild
 
 ;;; Code:
 
